@@ -13,11 +13,11 @@
 #include "driver/gpio.h"
 
 #define RMT_LED_STRIP_RESOLUTION_HZ 10000000 // 10MHz resolution, 1 tick = 0.1us (led strip needs a high resolution)
-#define RMT_LED_STRIP_GPIO_NUM 10
+#define RMT_LED_STRIP_GPIO_NUM 0
 
-#define EXAMPLE_LED_NUMBERS 900
+#define EXAMPLE_LED_NUMBERS 1
 #define EXAMPLE_CHASE_SPEED_MS 1
-#define BRIGHTNESS 1
+#define BRIGHTNESS 0.05
 // #define MODE_RAINBOW
 #define MODE_LIGHT
 #define DEFAULT_BLUE 255
@@ -116,6 +116,29 @@ void led_strip_hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *r, uint32_t
 
 void app_main(void)
 {
+
+    // zero-initialize the config structure.
+    gpio_config_t io_conf = {};
+    // disable interrupt
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    // set as output mode
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    // bit mask of the pins that is GPIO3
+    io_conf.pin_bit_mask = (1ULL << 3) | (1ULL << 1);
+    // disable pull-down mode
+    io_conf.pull_down_en = 0;
+    // disable pull-up mode
+    io_conf.pull_up_en = 0;
+    // configure GPIO with the given settings
+    gpio_config(&io_conf);
+
+    gpio_set_level(3, 1);
+    gpio_set_level(1, 1);
+
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+
+    gpio_set_level(3, 0);
+
     uint32_t red = 0;
     uint32_t green = 0;
     uint32_t blue = 0;
@@ -281,16 +304,18 @@ void app_main(void)
             // gpio_set_level(38, (i >> 2) & 0x01);
             for (int j = 0; j < EXAMPLE_LED_NUMBERS; j++)
             {
-                // led_strip_hsv2rgb(hue, 100, 100, &red, &green, &blue);
-                led_strip_pixels[j * 3 + 0] = DEFAULT_GREEN * BRIGHTNESS;
-                led_strip_pixels[j * 3 + 1] = DEFAULT_RED * BRIGHTNESS;
-                led_strip_pixels[j * 3 + 2] = DEFAULT_BLUE * BRIGHTNESS;
+                hue = start_rgb;
+                led_strip_hsv2rgb(hue, 100, 100, &red, &green, &blue);
+                led_strip_pixels[j * 3 + 0] = red * BRIGHTNESS;
+                led_strip_pixels[j * 3 + 1] = green * BRIGHTNESS;
+                led_strip_pixels[j * 3 + 2] = blue * BRIGHTNESS;
             }
             // Flush RGB values to LEDs
             ESP_ERROR_CHECK(rmt_transmit(led_chan, led_encoder, led_strip_pixels, sizeof(led_strip_pixels), &tx_config));
             ESP_ERROR_CHECK(rmt_tx_wait_all_done(led_chan, portMAX_DELAY));
+            start_rgb += 1;
         }
-        vTaskDelay(1);
+        vTaskDelay(10);
     }
 // break;
 #endif
