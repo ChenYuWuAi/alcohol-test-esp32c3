@@ -221,8 +221,6 @@ extern "C" void app_main(void)
     uint32_t red = 0;
     uint32_t green = 0;
     uint32_t blue = 0;
-    uint16_t hue = 0;
-    uint16_t start_rgb = 0;
 
     ESP_LOGI(TAG, "Create RMT TX channel");
     rmt_channel_handle_t led_chan = NULL;
@@ -260,42 +258,97 @@ extern "C" void app_main(void)
 
     setup_pwm();
 
-    PID pid = PID(-1, -0.003, 0, 100, 100, 100, 100, 30);
+    PID pid = PID(-1.5, -0.003, 0, 100, 100, 100, 100, 30);
 
     ESP_LOGI(TAG, "Start PID control loop");
 
+    uint32_t run_index = 0;
+    float output = 0;
+
     while (1)
     {
+        // 读取串口数据，决定LED颜色
+        // 读取3位数，分别代表RGB
+        if (voltage[0][0] - 500 > 15 || voltage[0][0] - 500 < -15)
+        {
+            gpio_set_level(GPIO_NUM_3, 0);
+            red = 102;
+            green = 204;
+            blue = 255;
+        }
+        else
+        {
+            if (voltage[1][0] > 2700 && voltage[1][0] < 2800)
+            {
+                red = 255;
+                green = 255;
+                blue = 0;
+                gpio_set_level(GPIO_NUM_3, 0);
+            }
+            else if (voltage[1][0] > 2800)
+            {
+                static uint8_t index = 0;
+                red = 255;
+                green = 0;
+                blue = 0;
+                if (index++ % 10 < 2)
+                    gpio_set_level(GPIO_NUM_3, 1);
+                else
+                    gpio_set_level(GPIO_NUM_3, 0);
+            }
+            else
+            {
+                gpio_set_level(GPIO_NUM_3, 0);
+                red = 0;
+                green = 255;
+                blue = 0;
+            }
+        }
+
         ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_2, &adc_raw[0][0]));
         // ESP_LOGD(TAG, "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, ADC_CHANNEL_2, adc_raw[0][0]);
 
         ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc1_cali_chan0_handle, adc_raw[0][0], &voltage[0][0]));
-        ESP_LOGI(TAG, "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1, ADC_CHANNEL_2, voltage[0][0]);
+        ESP_LOGI(TAG, "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1, ADC_CHANNEL_2, voltage[0][1]);
 
         ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, ADC_CHANNEL_4, &adc_raw[1][0]));
         // ESP_LOGD(TAG, "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, ADC_CHANNEL_4, adc_raw[1][0]);
-
         ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc1_cali_chan0_handle, adc_raw[1][0], &voltage[1][0]));
         ESP_LOGI(TAG, "ADC%d Channel[%d] Cali Voltage: %d mV", ADC_UNIT_1 + 1, ADC_CHANNEL_4, voltage[1][0]);
 
-        hue = start_rgb;
-        led_strip_hsv2rgb(hue, 100, 100, &red, &green, &blue);
-        led_strip_pixels[0] = red * BRIGHTNESS;
-        led_strip_pixels[1] = green * BRIGHTNESS;
+        // hue = start_rgb;
+        // led_strip_hsv2rgb(hue, 100, 100, &red, &green, &blue);
+        led_strip_pixels[0] = green * BRIGHTNESS;
+        led_strip_pixels[1] = red * BRIGHTNESS;
         led_strip_pixels[2] = blue * BRIGHTNESS;
         // Flush RGB values to LEDs
         ESP_ERROR_CHECK(rmt_transmit(led_chan, led_encoder, led_strip_pixels, sizeof(led_strip_pixels), &tx_config));
         ESP_ERROR_CHECK(rmt_tx_wait_all_done(led_chan, portMAX_DELAY));
-        start_rgb += 5;
+
+        // 斩波滤波
+        if (voltage[0][0] - voltage[0][1] > 100 && run_index > 10)
+        {
+            if (voltage[0][0] - voltage[0][1] > 300)
+            {
+                goto next;
+            }
+            voltage[0][1] = voltage[0][0] * 0.1 + voltage[0][1] * 0.9;
+        }
+        else
+        {
+            voltage[0][1] = voltage[0][0];
+        }
 
         // 更新PID
         // 前馈
-        float output = pid.get_output(voltage[0][0], 1000); // 设置温度NTC目标为1000mV
+        output = pid.get_output(voltage[0][1], 500); // 设置温度NTC目标为800mV
         LIMIT_MIN_MAX(output, 0, 100);
         output = (output) * 0.01 * 8192;
         // ESP_LOGI(TAG, "Output: %f", output);
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, (uint32_t)output);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    next:
         vTaskDelay(10);
+        run_index++;
     }
 }
